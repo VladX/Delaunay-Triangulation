@@ -1,7 +1,6 @@
 #include <iostream>
 #include <vector>
 #include <queue>
-#include <map>
 #include <algorithm>
 #include <math.h>
 #include <assert.h>
@@ -13,13 +12,16 @@ using namespace std;
 #define ASSERT(x)
 #endif
 
-/* Delaunay triangulation O(N log N) */
+/* Band pass algorithm for Delaunay triangulation. O(N log N) average, O(N^2) worst. Very fast in practice. */
 class Delaunay {
-private:
-	struct history_node;
 public:
 	struct point {
-		double x, y;
+		union {
+			struct {
+				double x, y;
+			};
+			double dim[2];
+		};
 		
 		inline point (double x, double y) : x(x), y(y) {};
 		inline point () {};
@@ -31,6 +33,9 @@ public:
 			double xx=x-p.x, yy=y-p.y;
 			return xx*xx + yy*yy;
 		}
+		inline static bool cmpByX (const point & p1, const point & p2) { return p1.x < p2.x || (p1.x == p2.x && p1.y < p2.y); }
+		inline static bool cmpByY (const point & p1, const point & p2) { return p1.y < p2.y || (p1.y == p2.y && p1.x < p2.x); }
+		inline static bool cmpByYrev (const point & p1, const point & p2) { return p1.y > p2.y || (p1.y == p2.y && p1.x > p2.x); }
 	};
 	
 	struct triangle_basic {
@@ -41,14 +46,7 @@ public:
 		inline triangle_basic (const point * a, const point * b, const point * c) : a(a),b(b),c(c) {}
 		
 		inline static double signed_area (const point & p1, const point & p2, const point & p3) {
-			return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y);
-		}
-		
-		inline bool isInside (const point & p) const {
-			bool b1 = signed_area(p, * a, * b) < 0.0;
-			bool b2 = signed_area(p, * b, * c) < 0.0;
-			bool b3 = signed_area(p, * c, * a) < 0.0;
-			return ((b1 == b2) && (b2 == b3));
+			return (p2.x - p1.x) * (p3.y - p1.y) - (p2.y - p1.y) * (p3.x - p1.x);
 		}
 	};
 	
@@ -142,23 +140,10 @@ private:
 		inline edge () {}
 	};
 	
-	struct history_node {
-		triangle_basic tri;
-		triangle * link;
-		size_t nodes[3];
-		
-		inline history_node () {}
-		inline history_node (triangle * t) : tri(* t), link(t) {
-			nodes[0] = 0, nodes[1] = 0, nodes[2] = 0;
-		}
-	};
-	
 	vector<triangle> triangles;
 	vector<point> points;
 	point root_points[3];
-	vector<history_node> history_nodes;
-	queue<edge> bad_edges;
-	
+
 	inline static bool delaunayCond (const edge & e) {
 		triangle * opposite = e.tri->edg[e.n];
 		if (!opposite)
@@ -168,49 +153,34 @@ private:
 		return cond;
 	}
 	
-	/* For flip */
-	inline void advance (triangle * t1, triangle * t2) {
-		size_t n1 = history_nodes.size();
-		size_t n2 = n1 + 1;
-		history_nodes.push_back(history_node(t1));
-		history_nodes.push_back(history_node(t2));
-		history_nodes[t1->graphnode].nodes[0] = n1;
-		history_nodes[t1->graphnode].nodes[1] = n2;
-		history_nodes[t2->graphnode].nodes[0] = n1;
-		history_nodes[t2->graphnode].nodes[1] = n2;
-		t1->graphnode = n1;
-		t2->graphnode = n2;
-	}
-	
-	/* For split */
-	inline void advance (size_t node, triangle * t1, triangle * t2, triangle * t3) {
-		history_node * n = &history_nodes[node];
-		n->nodes[0] = history_nodes.size();
-		n->nodes[1] = history_nodes.size() + 1;
-		n->nodes[2] = history_nodes.size() + 2;
-		history_nodes.push_back(history_node(t1));
-		history_nodes.push_back(history_node(t2));
-		history_nodes.push_back(history_node(t3));
-		n = &history_nodes[node];
-		t1->graphnode = n->nodes[0];
-		t2->graphnode = n->nodes[1];
-		t3->graphnode = n->nodes[2];
-	}
-	
-	triangle * search_triangle (const point * p) const {
-		const history_node * n = &history_nodes.front();
-		while (n->nodes[0]) {
-			if (history_nodes[n->nodes[0]].tri.isInside(* p)) {
-				n = &history_nodes[n->nodes[0]];
-				continue;
+	triangle * search_triangle (const point * p) {
+		triangle * t = &triangles.back();
+		for (;;) {
+			bool b1 = triangle::signed_area(*p, *t->a, *t->b) > 0.0;
+			bool b2 = triangle::signed_area(*p, *t->b, *t->c) > 0.0;
+			bool b3 = triangle::signed_area(*p, *t->c, *t->a) > 0.0;
+			if (triangle::signed_area(*t->a, *t->b, *t->c) > 0.0) {
+				if (b1 && b2 && b3)
+					break;
+				if (!b1)
+					t = t->ab;
+				else if (!b2)
+					t = t->bc;
+				else
+					t = t->ac;
 			}
-			if (history_nodes[n->nodes[1]].tri.isInside(* p)) {
-				n = &history_nodes[n->nodes[1]];
-				continue;
+			else {
+				if (!b1 && !b2 && !b3)
+					break;
+				if (b1)
+					t = t->ab;
+				else if (b2)
+					t = t->bc;
+				else
+					t = t->ac;
 			}
-			n = &history_nodes[n->nodes[2]];
 		}
-		return n->link;
+		return t;
 	}
 	
 	void create_root_triangle () {
@@ -231,7 +201,6 @@ private:
 		triangle root_tri(&root_points[0], &root_points[1], &root_points[2]);
 		root_tri.graphnode = 0; // link root triangle with first node in history graph
 		triangles.push_back(root_tri);
-		history_nodes.push_back(history_node(&triangles.front()));
 	}
 	
 	void remove_root_triangle () {
@@ -291,7 +260,6 @@ private:
 		t->ab = APB;
 		t->bc = BPC;
 		t->recache();
-		advance(t->graphnode, APB, BPC, t);
 		result[0] = edge(APB, 1), result[1] = edge(BPC, 1), result[2] = edge(t, 1);
 	}
 	
@@ -355,7 +323,6 @@ private:
 		}
 		left->recache();
 		right->recache();
-		advance(left, right);
 		ret[0] = left, ret[1] = right;
 	}
 	
@@ -364,6 +331,7 @@ private:
 		ASSERT(t->checkForCorrectness());
 		edge res[3];
 		split_triangle(p, t, res);
+		static queue<edge> bad_edges;
 		bad_edges.push(res[0]), bad_edges.push(res[1]), bad_edges.push(res[2]);
 		while (!bad_edges.empty()) {
 			edge e = bad_edges.front();
@@ -396,6 +364,17 @@ private:
 		}
 		return true;
 	}
+	
+	void ensure_proper_ordering () {
+		sort(points.begin(), points.end(), point::cmpByX);
+		const size_t M = sqrt((double) points.size()) * 0.5;
+		if (M == 0)
+			return;
+		const size_t step = points.size() / M;
+		for (size_t i = 0; i < M; ++i)
+			sort(points.begin() + step * i, points.begin() + step * (i + 1), (i & 1) ? point::cmpByYrev : point::cmpByY);
+		sort(points.begin() + step * M, points.end(), (M & 1) ? point::cmpByYrev : point::cmpByY);
+	}
 public:
 	inline void add_point (double x, double y) {
 		points.push_back(point(x, y));
@@ -404,6 +383,7 @@ public:
 	void build () {
 		if (points.size() < 2)
 			return;
+		ensure_proper_ordering();
 		triangles.reserve(points.size() * 2 + 4); // Euler: V-E+F=2
 		create_root_triangle();
 		for (size_t i = 0; i < points.size(); ++i)
@@ -414,15 +394,6 @@ public:
 	
 	inline vector<triangle> & getTriangles () {
 		return triangles;
-	}
-};
-
-class cmp_ang {
-	const Delaunay::triangle * base;
-public:
-	inline cmp_ang (const Delaunay::triangle * base) : base(base) {}
-	inline bool operator() (const Delaunay::triangle * a, const Delaunay::triangle * b) const {
-		return atan2(a->circumcentre.y - base->circumcentre.y, a->circumcentre.x - base->circumcentre.x) < atan2(b->circumcentre.y - base->circumcentre.y, b->circumcentre.x - base->circumcentre.x);
 	}
 };
 
@@ -441,62 +412,10 @@ int main () {
 	auto t=d.getTriangles();
 	size_t cnt=t.size()*3;
 	cout<<cnt<<endl;
-	/*for (auto x : t) {
+	for (auto x : t) {
 		cout<<x.a->x<<' '<<x.a->y<<' '<<x.b->x<<' '<<x.b->y<<endl;
 		cout<<x.a->x<<' '<<x.a->y<<' '<<x.c->x<<' '<<x.c->y<<endl;
 		cout<<x.b->x<<' '<<x.b->y<<' '<<x.c->x<<' '<<x.c->y<<endl;
-	}*/
-	/*Delaunay d;
-	for (;;) {
-		double x,y;
-		if (!cin.good()) break;
-		cin>>x;
-		if (!cin.good()) break;
-		cin>>y;
-		d.add_point(x, y);
 	}
-	d.build();
-	vector<Delaunay::triangle> & tri = d.getTriangles();
-	map< Delaunay::triangle*,vector<Delaunay::triangle*> > g;
-	for (size_t i = 0; i < tri.size(); i++) {
-		for (size_t j = 0; j < 3; ++j)
-			if (tri[i].edg[j])
-				g[&tri[i]].push_back(tri[i].edg[j]);
-	}
-	map < Delaunay::triangle*, vector<char> > used;
-	for (map< Delaunay::triangle*,vector<Delaunay::triangle*> >::iterator it=g.begin();it!=g.end();++it) {
-		used[it->first].resize(it->second.size());
-		sort(it->second.begin(), it->second.end(), cmp_ang(it->first));
-	}
-	double answer=0;
-	size_t ans=0;
-	for (map< Delaunay::triangle*,vector<Delaunay::triangle*> >::iterator it=g.begin();it!=g.end();++it) {
-		for (size_t j=0; j < it->second.size(); ++j)
-			if (!used[it->first][j]) {
-				used[it->first][j] = true;
-				Delaunay::triangle* v = it->second[j], * pv = it->first;
-				vector<Delaunay::triangle*> facet;
-				for (;;) {
-					facet.push_back(v);
-					vector<Delaunay::triangle*>::iterator it = find(g[v].begin(), g[v].end(), pv);
-					if (++it == g[v].end())
-						it = g[v].begin();
-					if (used[v][it-g[v].begin()])
-						break;
-					used[v][it-g[v].begin()] = true;
-					pv = v,  v = *it;
-				}
-				double area = 0;
-				facet.push_back(facet[0]);
-				for (size_t k=0; k+1<facet.size(); ++k)
-					area += (facet[k]->circumcentre.x + facet[k+1]->circumcentre.x) * (facet[k]->circumcentre.y - facet[k+1]->circumcentre.y);
-				facet.pop_back();
-				if (area>1e-8) {
-					answer+=facet.size();
-					++ans;
-				}
-			}
-	}
-	cout<<(ans==0 ? 0 : (answer/ans))<<endl;*/
 	return 0;
 }
