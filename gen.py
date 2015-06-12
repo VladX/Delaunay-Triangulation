@@ -2,4 +2,4 @@ import random
 n = 100
 print(n)
 for i in xrange(n):
-	print('%f %f' % (random.random(),random.random()))
+	print('%.18f %.18f' % (random.random(),random.random()))

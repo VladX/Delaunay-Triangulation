@@ -1,7 +1,6 @@
 #include <iostream>
 #include <vector>
 #include <queue>
-#include <map>
 #include <algorithm>
 #include <math.h>
 #include <assert.h>
@@ -31,6 +30,7 @@ public:
 			double xx=x-p.x, yy=y-p.y;
 			return xx*xx + yy*yy;
 		}
+		inline double dist_squared () const { return x*x + y*y; }
 	};
 	
 	struct triangle_basic {
@@ -41,10 +41,10 @@ public:
 		inline triangle_basic (const point * a, const point * b, const point * c) : a(a),b(b),c(c) {}
 		
 		inline static double signed_area (const point & p1, const point & p2, const point & p3) {
-			return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y);
+			return (p2.x - p1.x) * (p3.y - p1.y) - (p2.y - p1.y) * (p3.x - p1.x);
 		}
 		
-		inline bool isInside (const point & p) const {
+		inline bool is_inside (const point & p) const {
 			bool b1 = signed_area(p, * a, * b) < 0.0;
 			bool b2 = signed_area(p, * b, * c) < 0.0;
 			bool b3 = signed_area(p, * c, * a) < 0.0;
@@ -72,13 +72,14 @@ public:
 		inline void recache () {
 			point bb = * b, cc = * c;
 			bb -= * a, cc -= * a;
-			double b2 = bb.x * bb.x + bb.y * bb.y;
-			double c2 = cc.x * cc.x + cc.y * cc.y;
+			double b2 = bb.dist_squared();
+			double c2 = cc.dist_squared();
 			circumcentre = point(cc.y * b2 - bb.y * c2, bb.x * c2 - cc.x * b2);
 			circumcentre /= 2 * (bb.x * cc.y - bb.y * cc.x);
+			ccRadSquared = circumcentre.dist_squared();
 			circumcentre += * a;
-			ccRadSquared = circumcentre.dist_squared(* a);
 		}
+		
 		inline void replace_edge (const triangle * from, triangle * to) {
 			if (ab == from) {
 				ab = to;
@@ -91,7 +92,8 @@ public:
 			ASSERT(bc == from);
 			bc = to;
 		}
-		inline const point * getOpposite (const triangle * t) const {
+		
+		inline const point * get_opposite (const triangle * t) const {
 			if (ab == t)
 				return c;
 			if (ac == t)
@@ -99,7 +101,16 @@ public:
 			ASSERT(bc == t);
 			return a;
 		}
-		inline triangle * getEdge (const point * p, const point * q) const {
+		
+		inline triangle * get_incident_edge (const triangle * t, const point * p) const {
+			if (ab == t)
+				return (a == p) ? ac : bc;
+			if (ac == t)
+				return (a == p) ? ab : bc;
+			return (b == p) ? ab : ac;
+		}
+		
+		inline triangle * get_edge (const point * p, const point * q) const {
 			if ((p == a && q == b) || (q == a && p == b))
 				return ab;
 			if ((p == a && q == c) || (q == a && p == c))
@@ -107,30 +118,15 @@ public:
 			ASSERT((p == b && q == c) || (q == b && p == c));
 			return bc;
 		}
-		inline bool hasEdge (const triangle * t) const {
+		
+		inline bool has_edge (const triangle * t) const {
 			if (ab == t || ac == t || bc == t)
 				return true;
 			return false;
 		}
-		inline bool checkForCorrectness () const {
-			return (!ab || ab->hasEdge(this)) && (!ac || ac->hasEdge(this)) && (!bc || bc->hasEdge(this));
-		}
-		inline double getAngle (size_t n) const {
-			double dab = a->dist_squared(* b);
-			double dac = a->dist_squared(* c);
-			double dbc = b->dist_squared(* c);
-			if (n == 0)
-				return acos((dac+dbc-dab)/(2.0*sqrt(dac)*sqrt(dbc)));
-			if (n == 1)
-				return acos((dab+dbc-dac)/(2.0*sqrt(dab)*sqrt(dbc)));
-			return acos((dab+dac-dbc)/(2.0*sqrt(dab)*sqrt(dac)));
-		}
-		inline double getAngle (const triangle * t) const {
-			if (ab == t)
-				return getAngle((size_t) 0);
-			if (ac == t)
-				return getAngle((size_t) 1);
-			return getAngle((size_t) 2);
+		
+		inline bool check_for_correctness () const {
+			return (!ab || ab->has_edge(this)) && (!ac || ac->has_edge(this)) && (!bc || bc->has_edge(this));
 		}
 	};
 private:
@@ -157,14 +153,13 @@ private:
 	vector<point> points;
 	point root_points[3];
 	vector<history_node> history_nodes;
-	queue<edge> bad_edges;
+	const static double kPrecision;
 	
-	inline static bool delaunayCond (const edge & e) {
+	inline static bool delaunay_cond (const edge & e) {
 		triangle * opposite = e.tri->edg[e.n];
 		if (!opposite)
 			return true;
-		const bool cond = e.tri->circumcentre.dist_squared(* opposite->getOpposite(e.tri)) >= e.tri->ccRadSquared;
-		ASSERT(cond == ((opposite->getAngle(e.tri) + e.tri->getAngle(e.n)) < M_PI));
+		const bool cond = e.tri->circumcentre.dist_squared(* opposite->get_opposite(e.tri)) * kPrecision > e.tri->ccRadSquared;
 		return cond;
 	}
 	
@@ -200,11 +195,11 @@ private:
 	triangle * search_triangle (const point * p) const {
 		const history_node * n = &history_nodes.front();
 		while (n->nodes[0]) {
-			if (history_nodes[n->nodes[0]].tri.isInside(* p)) {
+			if (history_nodes[n->nodes[0]].tri.is_inside(* p)) {
 				n = &history_nodes[n->nodes[0]];
 				continue;
 			}
-			if (history_nodes[n->nodes[1]].tri.isInside(* p)) {
+			if (history_nodes[n->nodes[1]].tri.is_inside(* p)) {
 				n = &history_nodes[n->nodes[1]];
 				continue;
 			}
@@ -298,20 +293,20 @@ private:
 	inline void flip (const edge & e, triangle * ret[2]) {
 		const triangle top = * e.tri->edg[e.n], bottom = * e.tri; // bottom to right, top to left
 		triangle * left = e.tri->edg[e.n], * right = e.tri;
-		const point * D = top.getOpposite(right);
+		const point * D = top.get_opposite(right);
 		if (e.n == 0) {
 			left->a = bottom.c;
 			left->b = bottom.b;
 			left->c = D;
 			left->ab = bottom.bc;
 			left->ac = right;
-			left->bc = top.getEdge(bottom.b, D);
+			left->bc = top.get_edge(bottom.b, D);
 			if (left->ab)
 				left->ab->replace_edge(right, left);
 			right->a = D;
 			right->b = bottom.a;
 			right->c = bottom.c;
-			right->ab = top.getEdge(bottom.a, D);
+			right->ab = top.get_edge(bottom.a, D);
 			right->ac = left;
 			right->bc = bottom.ac;
 			if (right->ab)
@@ -323,13 +318,13 @@ private:
 			left->c = D;
 			left->ab = bottom.bc;
 			left->ac = right;
-			left->bc = top.getEdge(bottom.c, D);
+			left->bc = top.get_edge(bottom.c, D);
 			if (left->ab)
 				left->ab->replace_edge(right, left);
 			right->a = D;
 			right->b = bottom.a;
 			right->c = bottom.b;
-			right->ab = top.getEdge(bottom.a, D);
+			right->ab = top.get_edge(bottom.a, D);
 			right->ac = left;
 			right->bc = bottom.ab;
 			if (right->ab)
@@ -341,13 +336,13 @@ private:
 			left->c = D;
 			left->ab = bottom.ac;
 			left->ac = right;
-			left->bc = top.getEdge(bottom.c, D);
+			left->bc = top.get_edge(bottom.c, D);
 			if (left->ab)
 				left->ab->replace_edge(right, left);
 			right->a = D;
 			right->b = bottom.b;
 			right->c = bottom.a;
-			right->ab = top.getEdge(bottom.b, D);
+			right->ab = top.get_edge(bottom.b, D);
 			right->ac = left;
 			right->bc = bottom.ab;
 			if (right->ab)
@@ -361,14 +356,15 @@ private:
 	
 	void next_point (const point * p) {
 		triangle * t = search_triangle(p);
-		ASSERT(t->checkForCorrectness());
+		ASSERT(t->check_for_correctness());
 		edge res[3];
 		split_triangle(p, t, res);
+		static queue<edge> bad_edges;
 		bad_edges.push(res[0]), bad_edges.push(res[1]), bad_edges.push(res[2]);
 		while (!bad_edges.empty()) {
 			edge e = bad_edges.front();
 			bad_edges.pop();
-			if (delaunayCond(e))
+			if (delaunay_cond(e))
 				continue;
 			triangle * ret[2];
 			flip(e, ret);
@@ -396,6 +392,26 @@ private:
 		}
 		return true;
 	}
+	
+	inline size_t index_by_ptr (const point * p) const {
+		return p - points.data();
+	}
+	
+	inline void walk_counterclockwise (vector<bool> & used, vector< vector<const point *> > & vor, const point * around, const triangle * cur, const triangle * prev, const triangle * t) const {
+		size_t idx = index_by_ptr(around);
+		used[idx] = true;
+		for (;;) {
+			if (!cur) {
+				vor[idx].clear();
+				break;
+			}
+			vor[idx].push_back(&cur->circumcentre);
+			if (cur == t)
+				break;
+			const triangle * tmp = cur->get_incident_edge(prev, around);
+			prev = cur, cur = tmp;
+		}
+	}
 public:
 	inline void add_point (double x, double y) {
 		points.push_back(point(x, y));
@@ -406,30 +422,43 @@ public:
 			return;
 		triangles.reserve(points.size() * 2 + 4); // Euler: V-E+F=2
 		create_root_triangle();
+		random_shuffle(points.begin(), points.end());
 		for (size_t i = 0; i < points.size(); ++i)
 			next_point(&points[i]);
 		ASSERT(check_triangulation());
 		remove_root_triangle();
 	}
 	
-	inline vector<triangle> & getTriangles () {
+	inline vector<triangle> & get_triangles () {
 		return triangles;
+	}
+	/* Найти треугольник, содержащий точку (x, y). O(log N) */
+	inline triangle * locate_point (double x, double y) const {
+		const point p(x, y);
+		return search_triangle(&p);
+	}
+	/* Построить многоугольники диаграммы Вороного по триангуляции */
+	void build_voronoi_cells (vector< vector<const point *> > & vor) const {
+		vector<bool> used(points.size());
+		vor.resize(points.size());
+		for (size_t i = 0; i < triangles.size(); ++i) {
+			const triangle * t = &triangles[i];
+			if (!used[index_by_ptr(t->a)])
+				walk_counterclockwise(used, vor, t->a, triangle::signed_area(*t->a, *t->b, *t->c) > 0 ? t->ac : t->ab, t, t);
+			if (!used[index_by_ptr(t->b)])
+				walk_counterclockwise(used, vor, t->b, triangle::signed_area(*t->a, *t->b, *t->c) > 0 ? t->ab : t->bc, t, t);
+			if (!used[index_by_ptr(t->c)])
+				walk_counterclockwise(used, vor, t->c, triangle::signed_area(*t->a, *t->b, *t->c) > 0 ? t->bc : t->ac, t, t);
+		}
 	}
 };
 
-class cmp_ang {
-	const Delaunay::triangle * base;
-public:
-	inline cmp_ang (const Delaunay::triangle * base) : base(base) {}
-	inline bool operator() (const Delaunay::triangle * a, const Delaunay::triangle * b) const {
-		return atan2(a->circumcentre.y - base->circumcentre.y, a->circumcentre.x - base->circumcentre.x) < atan2(b->circumcentre.y - base->circumcentre.y, b->circumcentre.x - base->circumcentre.x);
-	}
-};
+const double Delaunay::kPrecision = 1.0 + 1e-8;
 
 int main () {
 	cin.sync_with_stdio(false);
 	cout.sync_with_stdio(false);
-	Delaunay d;
+	/*Delaunay d;
 	int n;
 	cin>>n;
 	for (int i=0;i<n;++i) {
@@ -438,15 +467,15 @@ int main () {
 		d.add_point(x, y);
 	}
 	d.build();
-	auto t=d.getTriangles();
+	auto t=d.get_triangles();
 	size_t cnt=t.size()*3;
 	cout<<cnt<<endl;
-	/*for (auto x : t) {
+	for (auto x : t) {
 		cout<<x.a->x<<' '<<x.a->y<<' '<<x.b->x<<' '<<x.b->y<<endl;
 		cout<<x.a->x<<' '<<x.a->y<<' '<<x.c->x<<' '<<x.c->y<<endl;
 		cout<<x.b->x<<' '<<x.b->y<<' '<<x.c->x<<' '<<x.c->y<<endl;
 	}*/
-	/*Delaunay d;
+	Delaunay d;
 	for (;;) {
 		double x,y;
 		if (!cin.good()) break;
@@ -456,47 +485,13 @@ int main () {
 		d.add_point(x, y);
 	}
 	d.build();
-	vector<Delaunay::triangle> & tri = d.getTriangles();
-	map< Delaunay::triangle*,vector<Delaunay::triangle*> > g;
-	for (size_t i = 0; i < tri.size(); i++) {
-		for (size_t j = 0; j < 3; ++j)
-			if (tri[i].edg[j])
-				g[&tri[i]].push_back(tri[i].edg[j]);
-	}
-	map < Delaunay::triangle*, vector<char> > used;
-	for (map< Delaunay::triangle*,vector<Delaunay::triangle*> >::iterator it=g.begin();it!=g.end();++it) {
-		used[it->first].resize(it->second.size());
-		sort(it->second.begin(), it->second.end(), cmp_ang(it->first));
-	}
 	double answer=0;
 	size_t ans=0;
-	for (map< Delaunay::triangle*,vector<Delaunay::triangle*> >::iterator it=g.begin();it!=g.end();++it) {
-		for (size_t j=0; j < it->second.size(); ++j)
-			if (!used[it->first][j]) {
-				used[it->first][j] = true;
-				Delaunay::triangle* v = it->second[j], * pv = it->first;
-				vector<Delaunay::triangle*> facet;
-				for (;;) {
-					facet.push_back(v);
-					vector<Delaunay::triangle*>::iterator it = find(g[v].begin(), g[v].end(), pv);
-					if (++it == g[v].end())
-						it = g[v].begin();
-					if (used[v][it-g[v].begin()])
-						break;
-					used[v][it-g[v].begin()] = true;
-					pv = v,  v = *it;
-				}
-				double area = 0;
-				facet.push_back(facet[0]);
-				for (size_t k=0; k+1<facet.size(); ++k)
-					area += (facet[k]->circumcentre.x + facet[k+1]->circumcentre.x) * (facet[k]->circumcentre.y - facet[k+1]->circumcentre.y);
-				facet.pop_back();
-				if (area>1e-8) {
-					answer+=facet.size();
-					++ans;
-				}
-			}
-	}
-	cout<<(ans==0 ? 0 : (answer/ans))<<endl;*/
+	vector< vector<const Delaunay::point *> > cells;
+	d.build_voronoi_cells(cells);
+	for (size_t i = 0; i < cells.size(); ++i)
+		if (cells[i].size())
+			answer += cells[i].size(), ++ans;
+	cout<<(ans==0 ? 0 : (answer/ans))<<endl;
 	return 0;
 }

@@ -16,12 +16,7 @@ using namespace std;
 class Delaunay {
 public:
 	struct point {
-		union {
-			struct {
-				double x, y;
-			};
-			double dim[2];
-		};
+		double x, y;
 		
 		inline point (double x, double y) : x(x), y(y) {};
 		inline point () {};
@@ -33,6 +28,7 @@ public:
 			double xx=x-p.x, yy=y-p.y;
 			return xx*xx + yy*yy;
 		}
+		inline double dist_squared () const { return x*x + y*y; }
 		inline static bool cmpByX (const point & p1, const point & p2) { return p1.x < p2.x || (p1.x == p2.x && p1.y < p2.y); }
 		inline static bool cmpByY (const point & p1, const point & p2) { return p1.y < p2.y || (p1.y == p2.y && p1.x < p2.x); }
 		inline static bool cmpByYrev (const point & p1, const point & p2) { return p1.y > p2.y || (p1.y == p2.y && p1.x > p2.x); }
@@ -59,7 +55,6 @@ public:
 		};
 		point circumcentre;
 		double ccRadSquared;
-		size_t graphnode;
 		
 		inline triangle () : ab(0),ac(0),bc(0) {}
 		
@@ -70,12 +65,12 @@ public:
 		inline void recache () {
 			point bb = * b, cc = * c;
 			bb -= * a, cc -= * a;
-			double b2 = bb.x * bb.x + bb.y * bb.y;
-			double c2 = cc.x * cc.x + cc.y * cc.y;
+			double b2 = bb.dist_squared();
+			double c2 = cc.dist_squared();
 			circumcentre = point(cc.y * b2 - bb.y * c2, bb.x * c2 - cc.x * b2);
 			circumcentre /= 2 * (bb.x * cc.y - bb.y * cc.x);
+			ccRadSquared = circumcentre.dist_squared();
 			circumcentre += * a;
-			ccRadSquared = circumcentre.dist_squared(* a);
 		}
 		inline void replace_edge (const triangle * from, triangle * to) {
 			if (ab == from) {
@@ -143,12 +138,13 @@ private:
 	vector<triangle> triangles;
 	vector<point> points;
 	point root_points[3];
+	const static double kPrecision;
 
 	inline static bool delaunayCond (const edge & e) {
 		triangle * opposite = e.tri->edg[e.n];
 		if (!opposite)
 			return true;
-		const bool cond = e.tri->circumcentre.dist_squared(* opposite->getOpposite(e.tri)) >= e.tri->ccRadSquared;
+		const bool cond = e.tri->circumcentre.dist_squared(* opposite->getOpposite(e.tri)) * kPrecision > e.tri->ccRadSquared;
 		ASSERT(cond == ((opposite->getAngle(e.tri) + e.tri->getAngle(e.n)) < M_PI));
 		return cond;
 	}
@@ -199,7 +195,6 @@ private:
 		root_points[1] = point(avg.x, avg.y + maxdist * 2);
 		root_points[2] = point(avg.x + maxdist * 1.732050808, avg.y - maxdist);
 		triangle root_tri(&root_points[0], &root_points[1], &root_points[2]);
-		root_tri.graphnode = 0; // link root triangle with first node in history graph
 		triangles.push_back(root_tri);
 	}
 	
@@ -396,6 +391,8 @@ public:
 		return triangles;
 	}
 };
+
+const double Delaunay::kPrecision = 1.0 + 1e-8;
 
 int main () {
 	cin.sync_with_stdio(false);
