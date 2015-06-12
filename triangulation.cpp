@@ -45,10 +45,27 @@ public:
 		}
 		
 		inline bool is_inside (const point & p) const {
-			bool b1 = signed_area(p, * a, * b) < 0.0;
-			bool b2 = signed_area(p, * b, * c) < 0.0;
-			bool b3 = signed_area(p, * c, * a) < 0.0;
-			return ((b1 == b2) && (b2 == b3));
+			double s1 = signed_area(p, * a, * b);
+			double s2 = signed_area(p, * b, * c);
+			double s3 = signed_area(p, * c, * a);
+			if ((s1 < 0 && s2 < 0 && s3 < 0) || (s1 > 0 && s2 > 0 && s3 > 0))
+				return true;
+			if (s1 == 0) {
+				if ((s2 < 0 && s3 < 0) || (s2 > 0 && s3 > 0))
+					return true;
+				return false;
+			}
+			if (s2 == 0) {
+				if ((s1 < 0 && s3 < 0) || (s1 > 0 && s3 > 0))
+					return true;
+				return false;
+			}
+			if (s3 == 0) {
+				if ((s1 < 0 && s2 < 0) || (s1 > 0 && s2 > 0))
+					return true;
+				return false;
+			}
+			return false;
 		}
 	};
 	
@@ -74,10 +91,17 @@ public:
 			bb -= * a, cc -= * a;
 			double b2 = bb.dist_squared();
 			double c2 = cc.dist_squared();
-			circumcentre = point(cc.y * b2 - bb.y * c2, bb.x * c2 - cc.x * b2);
-			circumcentre /= 2 * (bb.x * cc.y - bb.y * cc.x);
-			ccRadSquared = circumcentre.dist_squared();
-			circumcentre += * a;
+			double det = bb.x * cc.y - bb.y * cc.x;
+			if (det == 0) { // треугольник вырожденный (все точки на одной прямой)
+				circumcentre = point(0, 0);
+				ccRadSquared = INFINITY;
+			}
+			else {
+				circumcentre = point(cc.y * b2 - bb.y * c2, bb.x * c2 - cc.x * b2);
+				circumcentre /= 2 * det;
+				ccRadSquared = circumcentre.dist_squared();
+				circumcentre += * a;
+			}
 		}
 		
 		inline void replace_edge (const triangle * from, triangle * to) {
@@ -203,23 +227,34 @@ private:
 				n = &history_nodes[n->nodes[1]];
 				continue;
 			}
+			ASSERT(history_nodes[n->nodes[2]].tri.is_inside(* p));
 			n = &history_nodes[n->nodes[2]];
 		}
 		return n->link;
 	}
 	
 	void create_root_triangle () {
-		point avg(0,0);
-		for (size_t i = 0; i < points.size(); ++i)
-			avg += points[i];
-		avg /= points.size();
+		point bb_min = points[0], bb_max = points[0];
+		for (size_t i = 1; i < points.size(); ++i) {
+			if (points[i].x < bb_min.x)
+				bb_min.x = points[i].x;
+			else if (points[i].x > bb_max.x)
+				bb_max.x = points[i].x;
+			if (points[i].y < bb_min.y)
+				bb_min.y = points[i].y;
+			else if (points[i].y > bb_max.y)
+				bb_max.y = points[i].y;
+		}
+		point avg = bb_min;
+		avg += bb_max;
+		avg /= 2;
 		double maxdist = 0;
 		for (size_t i = 0; i < points.size(); ++i) {
 			double d = avg.dist_squared(points[i]);
 			if (d > maxdist)
 				maxdist = d;
 		}
-		maxdist = sqrt(maxdist) * 1e2;
+		maxdist = sqrt(maxdist) * 50;
 		root_points[0] = point(avg.x - maxdist * 1.732050808, avg.y - maxdist);
 		root_points[1] = point(avg.x, avg.y + maxdist * 2);
 		root_points[2] = point(avg.x + maxdist * 1.732050808, avg.y - maxdist);
@@ -386,7 +421,7 @@ private:
 				const point * p = &points[j];
 				if (p == t.a || p == t.b || p == t.c)
 					continue;
-				if (t.circumcentre.dist_squared(* p) < t.ccRadSquared)
+				if (t.circumcentre.dist_squared(* p) * kPrecision < t.ccRadSquared)
 					return false;
 			}
 		}
