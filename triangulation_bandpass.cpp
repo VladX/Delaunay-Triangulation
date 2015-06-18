@@ -137,6 +137,7 @@ private:
 	
 	vector<triangle> triangles;
 	vector<point> points;
+	queue<edge> bad_edges;
 	point root_points[3];
 	const static double kPrecision;
 
@@ -326,7 +327,6 @@ private:
 		ASSERT(t->checkForCorrectness());
 		edge res[3];
 		split_triangle(p, t, res);
-		static queue<edge> bad_edges;
 		bad_edges.push(res[0]), bad_edges.push(res[1]), bad_edges.push(res[2]);
 		while (!bad_edges.empty()) {
 			edge e = bad_edges.front();
@@ -409,10 +409,10 @@ int main () {
 	auto t=d.getTriangles();
 	size_t cnt=t.size()*3;
 	cout<<cnt<<endl;
-	for (auto x : t) {
+	/*for (auto x : t) {
 		cout<<x.a->x<<' '<<x.a->y<<' '<<x.b->x<<' '<<x.b->y<<endl;
 		cout<<x.a->x<<' '<<x.a->y<<' '<<x.c->x<<' '<<x.c->y<<endl;
 		cout<<x.b->x<<' '<<x.b->y<<' '<<x.c->x<<' '<<x.c->y<<endl;
-	}
+	}*/
 	return 0;
 }

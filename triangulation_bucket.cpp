@@ -15,7 +15,7 @@ using namespace std;
 /* Delaunay triangulation O(N log N) */
 class Delaunay {
 private:
-	struct history_node;
+	struct bucket_node;
 public:
 	struct point {
 		double x, y;
@@ -26,11 +26,15 @@ public:
 		inline void operator+= (const point & p) { x+=p.x, y+=p.y; };
 		inline void operator-= (const point & p) { x-=p.x, y-=p.y; };
 		inline void operator/= (double s) { x/=s, y/=s; };
+		inline void operator*= (double s) { x*=s, y*=s; };
 		inline double dist_squared (const point & p) const {
 			double xx=x-p.x, yy=y-p.y;
 			return xx*xx + yy*yy;
 		}
 		inline double dist_squared () const { return x*x + y*y; }
+		inline static bool cmpByX (const point & p1, const point & p2) { return p1.x < p2.x || (p1.x == p2.x && p1.y < p2.y); }
+		inline static bool cmpByY (const point & p1, const point & p2) { return p1.y < p2.y || (p1.y == p2.y && p1.x < p2.x); }
+		inline bool operator< (const point & p2) const { return x < p2.x || (x == p2.x && y < p2.y); }
 	};
 	
 	struct triangle_basic {
@@ -43,30 +47,6 @@ public:
 		inline static double signed_area (const point & p1, const point & p2, const point & p3) {
 			return (p2.x - p1.x) * (p3.y - p1.y) - (p2.y - p1.y) * (p3.x - p1.x);
 		}
-		
-		inline bool is_inside (const point & p) const {
-			double s1 = signed_area(p, * a, * b);
-			double s2 = signed_area(p, * b, * c);
-			double s3 = signed_area(p, * c, * a);
-			if ((s1 < 0 && s2 < 0 && s3 < 0) || (s1 > 0 && s2 > 0 && s3 > 0))
-				return true;
-			if (s1 == 0) {
-				if ((s2 < 0 && s3 < 0) || (s2 > 0 && s3 > 0))
-					return true;
-				return false;
-			}
-			if (s2 == 0) {
-				if ((s1 < 0 && s3 < 0) || (s1 > 0 && s3 > 0))
-					return true;
-				return false;
-			}
-			if (s3 == 0) {
-				if ((s1 < 0 && s2 < 0) || (s1 > 0 && s2 > 0))
-					return true;
-				return false;
-			}
-			return false;
-		}
 	};
 	
 	struct triangle : public triangle_basic {
@@ -78,7 +58,7 @@ public:
 		};
 		point circumcentre;
 		double ccRadSquared;
-		size_t graphnode;
+		bucket_node * bucket;
 		
 		inline triangle () : ab(0),ac(0),bc(0) {}
 		
@@ -162,76 +142,81 @@ private:
 		inline edge () {}
 	};
 	
-	struct history_node {
-		triangle_basic tri;
-		triangle * link;
-		size_t nodes[3];
-		
-		inline history_node () {}
-		inline history_node (triangle * t) : tri(* t), link(t) {
-			nodes[0] = 0, nodes[1] = 0, nodes[2] = 0;
-		}
+	struct bucket_node {
+		const point * p;
+		bucket_node * next;
 	};
 	
 	vector<triangle> triangles;
 	vector<point> points;
 	point root_points[3];
-	vector<history_node> history_nodes;
-	queue<edge> bad_edges;
+	vector<edge> bad_edges;
+	bucket_node * buckets; // Вершины, ассоциированные с треугольниками
+	triangle ** locations; // Треугольники, ассоциированные с вершинами
 	const static double kPrecision;
 	
-	inline static bool delaunay_cond (const edge & e) {
+	/*inline bool incircle (point pa, point pb, point pc, point pd) const {
+		if (triangle::signed_area(pa, pb, pc) > 0)
+			swap(pb, pc);
+		double adx = pa.x - pd.x, bdx = pb.x - pd.x, cdx = pc.x - pd.x, ady = pa.y - pd.y, bdy = pb.y - pd.y, cdy = pc.y - pd.y;
+		double bdxcdy = bdx * cdy, cdxbdy = cdx * bdy;
+		double alift = adx * adx + ady * ady;
+		double cdxady = cdx * ady, adxcdy = adx * cdy;
+		double blift = bdx * bdx + bdy * bdy;
+		double adxbdy = adx * bdy, bdxady = bdx * ady;
+		double clift = cdx * cdx + cdy * cdy;
+		double det = alift * (bdxcdy - cdxbdy) + blift * (cdxady - adxcdy) + clift * (adxbdy - bdxady);
+		double permanent = (fabs(bdxcdy) + fabs(cdxbdy)) * alift + (fabs(cdxady) + fabs(adxcdy)) * blift + (fabs(adxbdy) + fabs(bdxady)) * clift;
+		double errbound = iccerrboundA * permanent;
+		if ((det > errbound) || (-det > errbound))
+			return det >= 0;
+		return incircleadapt(pa, pb, pc, pd, permanent);
+	}*/
+	
+	inline bool is_root (const point * p) const {
+		if (p == &root_points[0] || p == &root_points[1] || p == &root_points[2])
+			return true;
+		return false;
+	}
+	
+	inline bool delaunay_cond (const edge & e) const {
 		triangle * opposite = e.tri->edg[e.n];
 		if (!opposite)
 			return true;
-		const bool cond = e.tri->circumcentre.dist_squared(* opposite->get_opposite(e.tri)) * kPrecision > e.tri->ccRadSquared;
-		return cond;
-	}
-	
-	/* For flip */
-	inline void advance (triangle * t1, triangle * t2) {
-		size_t n1 = history_nodes.size();
-		size_t n2 = n1 + 1;
-		history_nodes.push_back(history_node(t1));
-		history_nodes.push_back(history_node(t2));
-		history_nodes[t1->graphnode].nodes[0] = n1;
-		history_nodes[t1->graphnode].nodes[1] = n2;
-		history_nodes[t2->graphnode].nodes[0] = n1;
-		history_nodes[t2->graphnode].nodes[1] = n2;
-		t1->graphnode = n1;
-		t2->graphnode = n2;
-	}
-	
-	/* For split */
-	inline void advance (size_t node, triangle * t1, triangle * t2, triangle * t3) {
-		history_node * n = &history_nodes[node];
-		n->nodes[0] = history_nodes.size();
-		n->nodes[1] = history_nodes.size() + 1;
-		n->nodes[2] = history_nodes.size() + 2;
-		history_nodes.push_back(history_node(t1));
-		history_nodes.push_back(history_node(t2));
-		history_nodes.push_back(history_node(t3));
-		n = &history_nodes[node];
-		t1->graphnode = n->nodes[0];
-		t2->graphnode = n->nodes[1];
-		t3->graphnode = n->nodes[2];
-	}
-	
-	triangle * search_triangle (const point * p) const {
-		const history_node * n = &history_nodes.front();
-		while (n->nodes[0]) {
-			if (history_nodes[n->nodes[0]].tri.is_inside(* p)) {
-				n = &history_nodes[n->nodes[0]];
-				continue;
+		if (e.tri->ccRadSquared == INFINITY || opposite->ccRadSquared == INFINITY)
+			return false;
+		const point * op = opposite->get_opposite(e.tri);
+		const bool ra = is_root(e.tri->a), rb = is_root(e.tri->b), rc = is_root(e.tri->c), ro = is_root(op);
+		if (ra + rb + rc + ro == 1) {
+			if (ro)
+				return true;
+			if (e.n == 0) {
+				if (rc)
+					return true;
+				if (ra)
+					return triangle::signed_area(*op, *e.tri->c, *e.tri->b) >= 0;
+				if (rb)
+					return triangle::signed_area(*op, *e.tri->a, *e.tri->c) >= 0;
 			}
-			if (history_nodes[n->nodes[1]].tri.is_inside(* p)) {
-				n = &history_nodes[n->nodes[1]];
-				continue;
+			else if (e.n == 1) {
+				if (rb)
+					return true;
+				if (ra)
+					return triangle::signed_area(*op, *e.tri->c, *e.tri->b) >= 0;
+				if (rc)
+					return triangle::signed_area(*op, *e.tri->b, *e.tri->a) >= 0;
 			}
-			ASSERT(history_nodes[n->nodes[2]].tri.is_inside(* p));
-			n = &history_nodes[n->nodes[2]];
+			else {
+				if (ra)
+					return true;
+				if (rb)
+					return triangle::signed_area(*op, *e.tri->a, *e.tri->c) >= 0;
+				if (rc)
+					return triangle::signed_area(*op, *e.tri->b, *e.tri->a) >= 0;
+			}
 		}
-		return n->link;
+		const bool cond = e.tri->circumcentre.dist_squared(* op) * kPrecision > e.tri->ccRadSquared;
+		return cond;
 	}
 	
 	void create_root_triangle () {
@@ -255,30 +240,31 @@ private:
 			if (d > maxdist)
 				maxdist = d;
 		}
-		maxdist = sqrt(maxdist) * 1e2;
-		root_points[0] = point(avg.x - maxdist * 1.732050808, avg.y - maxdist);
-		root_points[1] = point(avg.x, avg.y + maxdist * 2);
-		root_points[2] = point(avg.x + maxdist * 1.732050808, avg.y - maxdist);
+		maxdist = sqrt(maxdist) * 1.5;
+		root_points[0] = point(avg.x, avg.y + maxdist * 2);
+		root_points[1] = point(avg.x - maxdist * 2, avg.y - maxdist);
+		root_points[2] = point(avg.x + maxdist * 2, avg.y - maxdist);
 		triangle root_tri(&root_points[0], &root_points[1], &root_points[2]);
-		root_tri.graphnode = 0; // link root triangle with first node in history graph
+		root_tri.bucket = buckets;
 		triangles.push_back(root_tri);
-		history_nodes.push_back(history_node(&triangles.front()));
+		for (size_t i = 0; i < points.size(); ++i) {
+			buckets[i].p = &points[i];
+			buckets[i].next = (i + 1 < points.size()) ? &buckets[i + 1] : 0;
+			locations[i] = triangles.data();
+		}
 	}
 	
 	void remove_root_triangle () {
 		for (size_t i = 0; i < triangles.size(); ++i) {
-			for (size_t j = 0; j < 3; ++j) {
-				triangle * t = &triangles[i];
-				if (t->a == &root_points[j] || t->b == &root_points[j] || t->c == &root_points[j]) {
-					if (t->ab)
-						t->ab->replace_edge(t, 0);
-					if (t->ac)
-						t->ac->replace_edge(t, 0);
-					if (t->bc)
-						t->bc->replace_edge(t, 0);
-					t->a = 0;
-					break;
-				}
+			triangle * t = &triangles[i];
+			if (is_root(t->a) || is_root(t->b) || is_root(t->c)) {
+				if (t->ab)
+					t->ab->replace_edge(t, 0);
+				if (t->ac)
+					t->ac->replace_edge(t, 0);
+				if (t->bc)
+					t->bc->replace_edge(t, 0);
+				t->a = 0;
 			}
 		}
 		size_t * diff = new size_t[triangles.size()];
@@ -304,26 +290,41 @@ private:
 	}
 	
 	inline void split_triangle (const point * p, triangle * t, edge result[3]) {
-		triangles.push_back(triangle(t->a, p, t->b));
-		triangle * APB = &triangles.back();
-		triangles.push_back(triangle(t->b, p, t->c));
-		triangle * BPC = &triangles.back();
+		triangles.push_back(triangle(t->a, t->b, p));
+		triangle * ABP = &triangles.back();
+		triangles.push_back(triangle(t->b, t->c, p));
+		triangle * BCP = &triangles.back();
 		if (t->ab)
-			t->ab->replace_edge(t, APB);
+			t->ab->replace_edge(t, ABP);
 		if (t->bc)
-			t->bc->replace_edge(t, BPC);
+			t->bc->replace_edge(t, BCP);
 		t->b = p;
-		APB->ab = t;
-		APB->ac = t->ab;
-		APB->bc = BPC;
-		BPC->ab = APB;
-		BPC->ac = t->bc;
-		BPC->bc = t;
-		t->ab = APB;
-		t->bc = BPC;
+		ABP->ab = t->ab, ABP->ac = t, ABP->bc = BCP;
+		BCP->ab = t->bc, BCP->ac = ABP, BCP->bc = t;
+		t->ab = ABP;
+		t->bc = BCP;
 		t->recache();
-		advance(t->graphnode, APB, BPC, t);
-		result[0] = edge(APB, 1), result[1] = edge(BPC, 1), result[2] = edge(t, 1);
+		bucket_node * b1 = 0, * b2 = 0, * b3 = 0;
+		for (bucket_node * b = t->bucket, * nxt; b; b = nxt) {
+			nxt = b->next;
+			if (triangle::signed_area(*b->p, *p, *ABP->a) >= 0 && triangle::signed_area(*b->p, *ABP->b, *p) >= 0) {
+				b->next = b1;
+				b1 = b;
+				locations[b->p - points.data()] = ABP;
+			}
+			else if (triangle::signed_area(*b->p, *BCP->b, *p) > 0) {
+				b->next = b2;
+				b2 = b;
+				locations[b->p - points.data()] = BCP;
+			}
+			else {
+				b->next = b3;
+				b3 = b;
+				locations[b->p - points.data()] = t;
+			}
+		}
+		ABP->bucket = b1, BCP->bucket = b2, t->bucket = b3;
+		result[0] = edge(ABP, 0), result[1] = edge(BCP, 0), result[2] = edge(t, 1);
 	}
 	
 	inline void flip (const edge & e, triangle * ret[2]) {
@@ -331,85 +332,100 @@ private:
 		triangle * left = e.tri->edg[e.n], * right = e.tri;
 		const point * D = top.get_opposite(right);
 		if (e.n == 0) {
-			left->a = bottom.c;
-			left->b = bottom.b;
-			left->c = D;
+			left->a = bottom.b, left->b = bottom.c, left->c = D;
 			left->ab = bottom.bc;
-			left->ac = right;
-			left->bc = top.get_edge(bottom.b, D);
+			left->ac = top.get_edge(bottom.b, D);
+			left->bc = right;
 			if (left->ab)
 				left->ab->replace_edge(right, left);
-			right->a = D;
-			right->b = bottom.a;
-			right->c = bottom.c;
-			right->ab = top.get_edge(bottom.a, D);
-			right->ac = left;
+			right->a = D, right->b = bottom.c, right->c = bottom.a;
+			right->ab = left;
+			right->ac = top.get_edge(bottom.a, D);
 			right->bc = bottom.ac;
-			if (right->ab)
-				right->ab->replace_edge(left, right);
+			if (right->ac)
+				right->ac->replace_edge(left, right);
 		}
 		else if (e.n == 1) {
-			left->a = bottom.b;
-			left->b = bottom.c;
-			left->c = D;
-			left->ab = bottom.bc;
-			left->ac = right;
-			left->bc = top.get_edge(bottom.c, D);
+			left->a = bottom.a, left->b = bottom.b, left->c = D;
+			left->ab = bottom.ab;
+			left->ac = top.get_edge(bottom.a, D);
+			left->bc = right;
 			if (left->ab)
 				left->ab->replace_edge(right, left);
-			right->a = D;
-			right->b = bottom.a;
-			right->c = bottom.b;
-			right->ab = top.get_edge(bottom.a, D);
-			right->ac = left;
-			right->bc = bottom.ab;
-			if (right->ab)
-				right->ab->replace_edge(left, right);
+			right->a = D, right->b = bottom.b, right->c = bottom.c;
+			right->ab = left;
+			right->ac = top.get_edge(bottom.c, D);
+			right->bc = bottom.bc;
+			if (right->ac)
+				right->ac->replace_edge(left, right);
 		}
 		else {
-			left->a = bottom.a;
-			left->b = bottom.c;
-			left->c = D;
+			left->a = bottom.c, left->b = bottom.a, left->c = D;
 			left->ab = bottom.ac;
-			left->ac = right;
-			left->bc = top.get_edge(bottom.c, D);
+			left->ac = top.get_edge(bottom.c, D);
+			left->bc = right;
 			if (left->ab)
 				left->ab->replace_edge(right, left);
-			right->a = D;
-			right->b = bottom.b;
-			right->c = bottom.a;
-			right->ab = top.get_edge(bottom.b, D);
-			right->ac = left;
+			right->a = D, right->b = bottom.a, right->c = bottom.b;
+			right->ab = left;
+			right->ac = top.get_edge(bottom.b, D);
 			right->bc = bottom.ab;
-			if (right->ab)
-				right->ab->replace_edge(left, right);
+			if (right->ac)
+				right->ac->replace_edge(left, right);
 		}
 		left->recache();
 		right->recache();
-		advance(left, right);
+		bucket_node * b1 = 0, * b2 = 0;
+		for (bucket_node * b = left->bucket, * nxt; b; b = nxt) {
+			nxt = b->next;
+			if (triangle::signed_area(*left->b, *left->c, *b->p) > 0) {
+				b->next = b1;
+				b1 = b;
+				locations[b->p - points.data()] = left;
+			}
+			else {
+				b->next = b2;
+				b2 = b;
+				locations[b->p - points.data()] = right;
+			}
+		}
+		for (bucket_node * b = right->bucket, * nxt; b; b = nxt) {
+			nxt = b->next;
+			if (triangle::signed_area(*left->b, *left->c, *b->p) > 0) {
+				b->next = b1;
+				b1 = b;
+				locations[b->p - points.data()] = left;
+			}
+			else {
+				b->next = b2;
+				b2 = b;
+				locations[b->p - points.data()] = right;
+			}
+		}
+		left->bucket = b1;
+		right->bucket = b2;
 		ret[0] = left, ret[1] = right;
 	}
 	
-	void next_point (const point * p) {
-		triangle * t = search_triangle(p);
+	void next_point (const point * p, triangle * t) {
 		ASSERT(t->check_for_correctness());
 		edge res[3];
 		split_triangle(p, t, res);
-		bad_edges.push(res[0]), bad_edges.push(res[1]), bad_edges.push(res[2]);
+		bad_edges.push_back(res[0]), bad_edges.push_back(res[1]), bad_edges.push_back(res[2]);
 		while (!bad_edges.empty()) {
-			edge e = bad_edges.front();
-			bad_edges.pop();
+			edge e = bad_edges.back();
+			bad_edges.pop_back();
 			if (delaunay_cond(e))
 				continue;
 			triangle * ret[2];
 			flip(e, ret);
 			for (size_t j = 0; j < 2; ++j) {
 				if (ret[j]->c == p)
-					bad_edges.push(edge(ret[j], 0));
+					bad_edges.push_back(edge(ret[j], 0));
 				else if (ret[j]->b == p)
-					bad_edges.push(edge(ret[j], 1));
+					bad_edges.push_back(edge(ret[j], 1));
 				else if (ret[j]->a == p)
-					bad_edges.push(edge(ret[j], 2));
+					bad_edges.push_back(edge(ret[j], 2));
 			}
 		}
 	}
@@ -452,25 +468,26 @@ public:
 		points.push_back(point(x, y));
 	}
 	
+	inline void add_point (const point & p) {
+		points.push_back(p);
+	}
+	
 	void build () {
 		if (points.size() < 2)
 			return;
 		triangles.reserve(points.size() * 2 + 4); // Euler: V-E+F=2
-		create_root_triangle();
 		random_shuffle(points.begin(), points.end());
+		buckets = new bucket_node[points.size()];
+		locations = new triangle *[points.size()];
+		create_root_triangle();
 		for (size_t i = 0; i < points.size(); ++i)
-			next_point(&points[i]);
+			next_point(&points[i], locations[i]);
 		ASSERT(check_triangulation());
 		remove_root_triangle();
 	}
 	
 	inline vector<triangle> & get_triangles () {
 		return triangles;
-	}
-	/* Найти треугольник, содержащий точку (x, y). O(log N) */
-	inline triangle * locate_point (double x, double y) const {
-		const point p(x, y);
-		return search_triangle(&p);
 	}
 	/* Построить многоугольники диаграммы Вороного по триангуляции */
 	void build_voronoi_cells (vector< vector<const point *> > & vor) const {

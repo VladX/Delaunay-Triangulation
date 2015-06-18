@@ -1,5 +1,5 @@
 import random
-n = 100
+n = 200
 print(n)
 for i in xrange(n):
-	print('%.18f %.18f' % (random.random(),random.random()))
+	print('%.12f %.12f' % (random.random(),random.random()))
