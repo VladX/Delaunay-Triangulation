@@ -27,10 +27,7 @@ public:
 		inline void operator-= (const point & p) { x-=p.x, y-=p.y; };
 		inline void operator/= (double s) { x/=s, y/=s; };
 		inline void operator*= (double s) { x*=s, y*=s; };
-		inline double dist_squared (const point & p) const {
-			double xx=x-p.x, yy=y-p.y;
-			return xx*xx + yy*yy;
-		}
+		inline double dist_squared (const point & p) const { double xx=x-p.x, yy=y-p.y; return xx*xx + yy*yy; }
 		inline double dist_squared () const { return x*x + y*y; }
 		inline static bool cmpByX (const point & p1, const point & p2) { return p1.x < p2.x || (p1.x == p2.x && p1.y < p2.y); }
 		inline static bool cmpByY (const point & p1, const point & p2) { return p1.y < p2.y || (p1.y == p2.y && p1.x < p2.x); }
@@ -464,6 +461,15 @@ private:
 		}
 	}
 public:
+	inline Delaunay () : buckets(0), locations(0) {}
+	
+	inline ~Delaunay () {
+		if (buckets) {
+			delete[] buckets;
+			delete[] locations;
+		}
+	}
+	
 	inline void add_point (double x, double y) {
 		points.push_back(point(x, y));
 	}
