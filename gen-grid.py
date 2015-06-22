@@ -1,6 +1,6 @@
 import random
 import math
-n=300
+n=30
 print(n*n)
 for i in xrange(n):
 	for j in xrange(n):

@@ -1,7 +1,8 @@
 #include <iostream>
 #include <vector>
-#include <queue>
 #include <algorithm>
+#include <type_traits>
+#include <limits>
 #include <math.h>
 #include <assert.h>
 using namespace std;
@@ -12,25 +13,34 @@ using namespace std;
 #define ASSERT(x)
 #endif
 
+#ifdef __GNUC__
+#define UNUSED(x) UNUSED_ ## x __attribute__((__unused__))
+#else
+#define UNUSED(x) UNUSED_ ## x
+#endif
+
 /* Delaunay triangulation O(N log N) */
+template<typename Tp = double>
 class Delaunay {
 private:
 	struct bucket_node;
 public:
 	struct point {
-		double x, y;
+		Tp x, y;
 		
-		inline point (double x, double y) : x(x), y(y) {};
+		inline point (Tp x, Tp y) : x(x), y(y) {};
 		inline point () {};
-		inline bool operator== (const point & p) const { return x==p.x && y==p.y; };
-		inline void operator+= (const point & p) { x+=p.x, y+=p.y; };
-		inline void operator-= (const point & p) { x-=p.x, y-=p.y; };
-		inline void operator/= (double s) { x/=s, y/=s; };
-		inline void operator*= (double s) { x*=s, y*=s; };
-		inline double dist_squared (const point & p) const { double xx=x-p.x, yy=y-p.y; return xx*xx + yy*yy; }
-		inline double dist_squared () const { return x*x + y*y; }
-		inline static bool cmpByX (const point & p1, const point & p2) { return p1.x < p2.x || (p1.x == p2.x && p1.y < p2.y); }
-		inline static bool cmpByY (const point & p1, const point & p2) { return p1.y < p2.y || (p1.y == p2.y && p1.x < p2.x); }
+		inline bool operator== (const point & p) const { return x == p.x && y == p.y; }
+		inline void operator+= (const point & p) { x+=p.x, y+=p.y; }
+		inline void operator-= (const point & p) { x-=p.x, y-=p.y; }
+		inline void operator/= (Tp s) { x/=s, y/=s; }
+		inline void operator*= (Tp s) { x*=s, y*=s; }
+		inline Tp operator() (const point & p) const { Tp xx = x - p.x, yy = y - p.y; return xx*xx + yy*yy; }
+		inline Tp operator() () const { return x*x + y*y; }
+		inline Tp operator^ (const point & p) const { return x * p.y - y * p.x; }
+		inline Tp operator* (const point & p) const { return x * p.x + y * p.y; }
+		inline static bool cmp_by_x (const point & p1, const point & p2) { return p1.x < p2.x || (p1.x == p2.x && p1.y < p2.y); }
+		inline static bool cmp_by_y (const point & p1, const point & p2) { return p1.y < p2.y || (p1.y == p2.y && p1.x < p2.x); }
 		inline bool operator< (const point & p2) const { return x < p2.x || (x == p2.x && y < p2.y); }
 	};
 	
@@ -41,45 +51,28 @@ public:
 		
 		inline triangle_basic (const point * a, const point * b, const point * c) : a(a),b(b),c(c) {}
 		
-		inline static double signed_area (const point & p1, const point & p2, const point & p3) {
+		inline static Tp signed_area (const point & p1, const point & p2, const point & p3) {
 			return (p2.x - p1.x) * (p3.y - p1.y) - (p2.y - p1.y) * (p3.x - p1.x);
 		}
 	};
 	
-	struct triangle : public triangle_basic {
+	struct triangle_ex;
+	struct triangle_fp;
+	typedef typename std::conditional<std::is_floating_point<Tp>::value, triangle_fp, triangle_ex>::type triangle;
+	
+	struct triangle_ex : public triangle_basic {
 		union {
 			struct {
 				triangle * ab, * ac, * bc;
 			};
 			triangle * edg[3];
 		};
-		point circumcentre;
-		double ccRadSquared;
 		bucket_node * bucket;
 		
-		inline triangle () : ab(0),ac(0),bc(0) {}
+		inline triangle_ex () : ab(0),ac(0),bc(0) {}
+		inline triangle_ex (const point * a, const point * b, const point * c) : triangle_basic(a, b, c),ab(0),ac(0),bc(0) {}
 		
-		inline triangle (const point * a, const point * b, const point * c) : triangle_basic(a, b, c),ab(0),ac(0),bc(0) {
-			recache();
-		}
-		/* Нужно только если меняются вершины треугольника */
-		inline void recache () {
-			point bb = * b, cc = * c;
-			bb -= * a, cc -= * a;
-			double b2 = bb.dist_squared();
-			double c2 = cc.dist_squared();
-			double det = bb.x * cc.y - bb.y * cc.x;
-			if (det == 0) { // треугольник вырожденный (все точки на одной прямой)
-				circumcentre = point(0, 0);
-				ccRadSquared = INFINITY;
-			}
-			else {
-				circumcentre = point(cc.y * b2 - bb.y * c2, bb.x * c2 - cc.x * b2);
-				circumcentre /= 2 * det;
-				ccRadSquared = circumcentre.dist_squared();
-				circumcentre += * a;
-			}
-		}
+		inline void recache () {}
 		
 		inline void replace_edge (const triangle * from, triangle * to) {
 			if (ab == from) {
@@ -96,27 +89,27 @@ public:
 		
 		inline const point * get_opposite (const triangle * t) const {
 			if (ab == t)
-				return c;
+				return this->c;
 			if (ac == t)
-				return b;
+				return this->b;
 			ASSERT(bc == t);
-			return a;
+			return this->a;
 		}
 		
 		inline triangle * get_incident_edge (const triangle * t, const point * p) const {
 			if (ab == t)
-				return (a == p) ? ac : bc;
+				return (this->a == p) ? ac : bc;
 			if (ac == t)
-				return (a == p) ? ab : bc;
-			return (b == p) ? ab : ac;
+				return (this->a == p) ? ab : bc;
+			return (this->b == p) ? ab : ac;
 		}
 		
 		inline triangle * get_edge (const point * p, const point * q) const {
-			if ((p == a && q == b) || (q == a && p == b))
+			if ((p == this->a && q == this->b) || (q == this->a && p == this->b))
 				return ab;
-			if ((p == a && q == c) || (q == a && p == c))
+			if ((p == this->a && q == this->c) || (q == this->a && p == this->c))
 				return ac;
-			ASSERT((p == b && q == c) || (q == b && p == c));
+			ASSERT((p == this->b && q == this->c) || (q == this->b && p == this->c));
 			return bc;
 		}
 		
@@ -129,6 +122,64 @@ public:
 		inline bool check_for_correctness () const {
 			return (!ab || ab->has_edge(this)) && (!ac || ac->has_edge(this)) && (!bc || bc->has_edge(this));
 		}
+		
+		inline bool degenerate () const { return this->signed_area(* this->a, * this->b, * this->c) == 0; }
+		
+		inline bool not_in_circumcircle (const point & p, const size_t n) const {
+			point p1, p2, p3, p4;
+			if (n == 0) {
+				p1 = p3 = * this->a, p2 = p4 = * this->b;
+				p1 -= * this->c, p2 -= * this->c;
+			}
+			else if (n == 1) {
+				p1 = p3 = * this->c, p2 = p4 = * this->a;
+				p1 -= * this->b, p2 -= * this->b;
+			}
+			else {
+				p1 = p3 = * this->b, p2 = p4 = * this->c;
+				p1 -= * this->a, p2 -= * this->a;
+			}
+			p3 -= p, p4 -= p;
+			const Tp cosa = p1 * p2, cosb = p3 * p4;
+			if (cosa < 0 && cosb < 0)
+				return false;
+			if (cosa >= 0 && cosb >= 0)
+				return true;
+			const long double sina = p1 ^ p2, sinb = p3 ^ p4;
+			return sina * cosb >= cosa * sinb;
+		}
+	};
+	
+	struct triangle_fp : public triangle_ex {
+		point circumcentre;
+		double ccRadSquared;
+		
+		inline triangle_fp () : triangle_ex() {}
+		inline triangle_fp (const point * a, const point * b, const point * c) : triangle_ex(a, b, c) {
+			recache();
+		}
+		
+		/* Нужно только если меняются вершины треугольника */
+		inline void recache () {
+			point bb = * this->b, cc = * this->c;
+			bb -= * this->a, cc -= * this->a;
+			Tp b2 = bb();
+			Tp c2 = cc();
+			Tp det = bb ^ cc;
+			if (det == 0) { // треугольник вырожденный (все точки на одной прямой)
+				circumcentre = point(0, 0);
+				ccRadSquared = std::numeric_limits<double>::infinity();
+			}
+			else {
+				circumcentre = point(cc.y * b2 - bb.y * c2, bb.x * c2 - cc.x * b2);
+				circumcentre /= 2 * det;
+				ccRadSquared = circumcentre();
+				circumcentre += * this->a;
+			}
+		}
+		
+		inline bool degenerate () const { return ccRadSquared == std::numeric_limits<double>::infinity(); }
+		inline bool not_in_circumcircle (const point & p, const size_t UNUSED(n)) const { return circumcentre(p) * precision() > ccRadSquared; }
 	};
 private:
 	struct edge {
@@ -147,28 +198,10 @@ private:
 	vector<triangle> triangles;
 	vector<point> points;
 	point root_points[3];
-	vector<edge> bad_edges;
 	bucket_node * buckets; // Вершины, ассоциированные с треугольниками
 	triangle ** locations; // Треугольники, ассоциированные с вершинами
-	const static double kPrecision;
 	
-	/*inline bool incircle (point pa, point pb, point pc, point pd) const {
-		if (triangle::signed_area(pa, pb, pc) > 0)
-			swap(pb, pc);
-		double adx = pa.x - pd.x, bdx = pb.x - pd.x, cdx = pc.x - pd.x, ady = pa.y - pd.y, bdy = pb.y - pd.y, cdy = pc.y - pd.y;
-		double bdxcdy = bdx * cdy, cdxbdy = cdx * bdy;
-		double alift = adx * adx + ady * ady;
-		double cdxady = cdx * ady, adxcdy = adx * cdy;
-		double blift = bdx * bdx + bdy * bdy;
-		double adxbdy = adx * bdy, bdxady = bdx * ady;
-		double clift = cdx * cdx + cdy * cdy;
-		double det = alift * (bdxcdy - cdxbdy) + blift * (cdxady - adxcdy) + clift * (adxbdy - bdxady);
-		double permanent = (fabs(bdxcdy) + fabs(cdxbdy)) * alift + (fabs(cdxady) + fabs(adxcdy)) * blift + (fabs(adxbdy) + fabs(bdxady)) * clift;
-		double errbound = iccerrboundA * permanent;
-		if ((det > errbound) || (-det > errbound))
-			return det >= 0;
-		return incircleadapt(pa, pb, pc, pd, permanent);
-	}*/
+	static inline constexpr double precision () { return 1.0 + 1e-8; }
 	
 	inline bool is_root (const point * p) const {
 		if (p == &root_points[0] || p == &root_points[1] || p == &root_points[2])
@@ -180,7 +213,7 @@ private:
 		triangle * opposite = e.tri->edg[e.n];
 		if (!opposite)
 			return true;
-		if (e.tri->ccRadSquared == INFINITY || opposite->ccRadSquared == INFINITY)
+		if (e.tri->degenerate() || opposite->degenerate())
 			return false;
 		const point * op = opposite->get_opposite(e.tri);
 		const bool ra = is_root(e.tri->a), rb = is_root(e.tri->b), rc = is_root(e.tri->c), ro = is_root(op);
@@ -212,8 +245,7 @@ private:
 					return triangle::signed_area(*op, *e.tri->b, *e.tri->a) >= 0;
 			}
 		}
-		const bool cond = e.tri->circumcentre.dist_squared(* op) * kPrecision > e.tri->ccRadSquared;
-		return cond;
+		return e.tri->not_in_circumcircle(* op, e.n);
 	}
 	
 	void create_root_triangle () {
@@ -231,9 +263,9 @@ private:
 		point avg = bb_min;
 		avg += bb_max;
 		avg /= 2;
-		double maxdist = 0;
+		Tp maxdist = 0;
 		for (size_t i = 0; i < points.size(); ++i) {
-			double d = avg.dist_squared(points[i]);
+			Tp d = avg(points[i]);
 			if (d > maxdist)
 				maxdist = d;
 		}
@@ -286,7 +318,7 @@ private:
 		delete[] diff;
 	}
 	
-	inline void split_triangle (const point * p, triangle * t, edge result[3]) {
+	void split_triangle (const point * p, triangle * t) {
 		triangles.push_back(triangle(t->a, t->b, p));
 		triangle * ABP = &triangles.back();
 		triangles.push_back(triangle(t->b, t->c, p));
@@ -321,11 +353,10 @@ private:
 			}
 		}
 		ABP->bucket = b1, BCP->bucket = b2, t->bucket = b3;
-		result[0] = edge(ABP, 0), result[1] = edge(BCP, 0), result[2] = edge(t, 1);
 	}
 	
-	inline void flip (const edge & e, triangle * ret[2]) {
-		const triangle top = * e.tri->edg[e.n], bottom = * e.tri; // bottom to right, top to left
+	void flip (const edge & e) {
+		const triangle_ex top = * e.tri->edg[e.n], bottom = * e.tri; // bottom to right, top to left
 		triangle * left = e.tri->edg[e.n], * right = e.tri;
 		const point * D = top.get_opposite(right);
 		if (e.n == 0) {
@@ -401,28 +432,37 @@ private:
 		}
 		left->bucket = b1;
 		right->bucket = b2;
-		ret[0] = left, ret[1] = right;
 	}
 	
 	void next_point (const point * p, triangle * t) {
 		ASSERT(t->check_for_correctness());
-		edge res[3];
-		split_triangle(p, t, res);
-		bad_edges.push_back(res[0]), bad_edges.push_back(res[1]), bad_edges.push_back(res[2]);
-		while (!bad_edges.empty()) {
-			edge e = bad_edges.back();
-			bad_edges.pop_back();
-			if (delaunay_cond(e))
-				continue;
-			triangle * ret[2];
-			flip(e, ret);
-			for (size_t j = 0; j < 2; ++j) {
-				if (ret[j]->c == p)
-					bad_edges.push_back(edge(ret[j], 0));
-				else if (ret[j]->b == p)
-					bad_edges.push_back(edge(ret[j], 1));
-				else if (ret[j]->a == p)
-					bad_edges.push_back(edge(ret[j], 2));
+		split_triangle(p, t);
+		edge e(t, 1);
+		for (;;) {
+			if (delaunay_cond(e)) {
+				if (e.n == 0)
+					e.tri = e.tri->bc;
+				else if (e.n == 1)
+					e.tri = e.tri->ab;
+				else
+					e.tri = e.tri->ac;
+				if (e.tri->a == p)
+					e.n = 2;
+				else if (e.tri->b == p)
+					e.n = 1;
+				else
+					e.n = 0;
+				if (e.tri == t)
+					break;
+			}
+			else {
+				flip(e);
+				if (e.tri->a == p)
+					e.n = 2;
+				else if (e.tri->b == p)
+					e.n = 1;
+				else
+					e.n = 0;
 			}
 		}
 	}
@@ -434,7 +474,7 @@ private:
 				const point * p = &points[j];
 				if (p == t.a || p == t.b || p == t.c)
 					continue;
-				if (t.circumcentre.dist_squared(* p) * kPrecision < t.ccRadSquared)
+				if (t.circumcentre(* p) * precision() < t.ccRadSquared)
 					return false;
 			}
 		}
@@ -470,7 +510,7 @@ public:
 		}
 	}
 	
-	inline void add_point (double x, double y) {
+	inline void add_point (Tp x, Tp y) {
 		points.push_back(point(x, y));
 	}
 	
@@ -502,25 +542,24 @@ public:
 		for (size_t i = 0; i < triangles.size(); ++i) {
 			const triangle * t = &triangles[i];
 			if (!used[index_by_ptr(t->a)])
-				walk_counterclockwise(used, vor, t->a, triangle::signed_area(*t->a, *t->b, *t->c) > 0 ? t->ac : t->ab, t, t);
+				walk_counterclockwise(used, vor, t->a, t->ac, t, t);
 			if (!used[index_by_ptr(t->b)])
-				walk_counterclockwise(used, vor, t->b, triangle::signed_area(*t->a, *t->b, *t->c) > 0 ? t->ab : t->bc, t, t);
+				walk_counterclockwise(used, vor, t->b, t->ab, t, t);
 			if (!used[index_by_ptr(t->c)])
-				walk_counterclockwise(used, vor, t->c, triangle::signed_area(*t->a, *t->b, *t->c) > 0 ? t->bc : t->ac, t, t);
+				walk_counterclockwise(used, vor, t->c, t->bc, t, t);
 		}
 	}
 };
 
-const double Delaunay::kPrecision = 1.0 + 1e-8;
-
 int main () {
 	cin.sync_with_stdio(false);
 	cout.sync_with_stdio(false);
-	Delaunay d;
+	typedef long axis;
+	Delaunay<axis> d;
 	int n;
 	cin>>n;
 	for (int i=0;i<n;++i) {
-		double x,y;
+		axis x,y;
 		cin>>x>>y;
 		d.add_point(x, y);
 	}
@@ -528,12 +567,12 @@ int main () {
 	auto t=d.get_triangles();
 	size_t cnt=t.size()*3;
 	cout<<cnt<<endl;
-	for (auto x : t) {
+	/*for (auto x : t) {
 		cout<<x.a->x<<' '<<x.a->y<<' '<<x.b->x<<' '<<x.b->y<<endl;
 		cout<<x.a->x<<' '<<x.a->y<<' '<<x.c->x<<' '<<x.c->y<<endl;
 		cout<<x.b->x<<' '<<x.b->y<<' '<<x.c->x<<' '<<x.c->y<<endl;
-	}
-	/*Delaunay d;
+	}*/
+	/*Delaunay<double> d;
 	for (;;) {
 		double x,y;
 		if (!cin.good()) break;
@@ -545,7 +584,7 @@ int main () {
 	d.build();
 	double answer=0;
 	size_t ans=0;
-	vector< vector<const Delaunay::point *> > cells;
+	vector< vector<const Delaunay<double>::point *> > cells;
 	d.build_voronoi_cells(cells);
 	for (size_t i = 0; i < cells.size(); ++i)
 		if (cells[i].size())
