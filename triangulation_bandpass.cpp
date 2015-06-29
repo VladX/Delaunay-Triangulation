@@ -409,10 +409,10 @@ int main () {
 	auto t=d.getTriangles();
 	size_t cnt=t.size()*3;
 	cout<<cnt<<endl;
-	/*for (auto x : t) {
+	for (auto x : t) {
 		cout<<x.a->x<<' '<<x.a->y<<' '<<x.b->x<<' '<<x.b->y<<endl;
 		cout<<x.a->x<<' '<<x.a->y<<' '<<x.c->x<<' '<<x.c->y<<endl;
 		cout<<x.b->x<<' '<<x.b->y<<' '<<x.c->x<<' '<<x.c->y<<endl;
-	}*/
+	}
 	return 0;
 }

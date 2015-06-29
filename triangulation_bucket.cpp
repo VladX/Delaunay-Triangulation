@@ -152,7 +152,7 @@ public:
 	
 	struct triangle_fp : public triangle_ex {
 		point circumcentre;
-		double ccRadSquared;
+		Tp ccRadSquared;
 		
 		inline triangle_fp () : triangle_ex() {}
 		inline triangle_fp (const point * a, const point * b, const point * c) : triangle_ex(a, b, c) {
@@ -168,7 +168,7 @@ public:
 			Tp det = bb ^ cc;
 			if (det == 0) { // треугольник вырожденный (все точки на одной прямой)
 				circumcentre = point(0, 0);
-				ccRadSquared = std::numeric_limits<double>::infinity();
+				ccRadSquared = std::numeric_limits<Tp>::infinity();
 			}
 			else {
 				circumcentre = point(cc.y * b2 - bb.y * c2, bb.x * c2 - cc.x * b2);
@@ -178,7 +178,7 @@ public:
 			}
 		}
 		
-		inline bool degenerate () const { return ccRadSquared == std::numeric_limits<double>::infinity(); }
+		inline bool degenerate () const { return ccRadSquared == std::numeric_limits<Tp>::infinity(); }
 		inline bool not_in_circumcircle (const point & p, const size_t UNUSED(n)) const { return circumcentre(p) * precision() > ccRadSquared; }
 	};
 private:
@@ -218,32 +218,14 @@ private:
 		const point * op = opposite->get_opposite(e.tri);
 		const bool ra = is_root(e.tri->a), rb = is_root(e.tri->b), rc = is_root(e.tri->c), ro = is_root(op);
 		if (ra + rb + rc + ro == 1) {
+			if (ra)
+				return triangle::signed_area(*e.tri->b, *e.tri->c, *op) <= 0;
+			if (rb)
+				return triangle::signed_area(*e.tri->c, *e.tri->a, *op) <= 0;
+			if (rc)
+				return triangle::signed_area(*e.tri->a, *e.tri->b, *op) <= 0;
 			if (ro)
 				return true;
-			if (e.n == 0) {
-				if (rc)
-					return true;
-				if (ra)
-					return triangle::signed_area(*op, *e.tri->c, *e.tri->b) >= 0;
-				if (rb)
-					return triangle::signed_area(*op, *e.tri->a, *e.tri->c) >= 0;
-			}
-			else if (e.n == 1) {
-				if (rb)
-					return true;
-				if (ra)
-					return triangle::signed_area(*op, *e.tri->c, *e.tri->b) >= 0;
-				if (rc)
-					return triangle::signed_area(*op, *e.tri->b, *e.tri->a) >= 0;
-			}
-			else {
-				if (ra)
-					return true;
-				if (rb)
-					return triangle::signed_area(*op, *e.tri->a, *e.tri->c) >= 0;
-				if (rc)
-					return triangle::signed_area(*op, *e.tri->b, *e.tri->a) >= 0;
-			}
 		}
 		return e.tri->not_in_circumcircle(* op, e.n);
 	}
@@ -554,7 +536,7 @@ public:
 int main () {
 	cin.sync_with_stdio(false);
 	cout.sync_with_stdio(false);
-	typedef long axis;
+	typedef double axis;
 	Delaunay<axis> d;
 	int n;
 	cin>>n;
