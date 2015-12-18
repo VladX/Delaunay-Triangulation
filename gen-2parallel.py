@@ -1,8 +1,8 @@
 import random
 import math
-n=20
+n=40
 print(2*n)
 for i in xrange(n):
-	print('%d %d' % (0, i))
+	print('%d %d' % (i, 0))
 for i in xrange(n):
-	print('%d %d' % (i+1, n/2))
+	print('%d %d' % (i, n))

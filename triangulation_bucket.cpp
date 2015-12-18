@@ -1,3 +1,25 @@
+/*
+Copyright (c) 2015 Vladislav Samsonov <vvladxx@gmail.com>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+*/
+
 #include <iostream>
 #include <vector>
 #include <algorithm>
@@ -385,10 +407,16 @@ private:
 		}
 		left->recache();
 		right->recache();
+		rebucket(left, right);
+	}
+	
+	inline void rebucket (triangle * left, triangle * right) const {
 		bucket_node * b1 = 0, * b2 = 0;
+		const Tp A = left->c->x - left->b->x, B = left->c->y - left->b->y;
+		const Tp C = A * left->b->y - B * left->b->x;
 		for (bucket_node * b = left->bucket, * nxt; b; b = nxt) {
 			nxt = b->next;
-			if (triangle::signed_area(*left->b, *left->c, *b->p) > 0) {
+			if (A * b->p->y > B * b->p->x + C) {
 				b->next = b1;
 				b1 = b;
 				locations[b->p - points.data()] = left;
@@ -401,7 +429,7 @@ private:
 		}
 		for (bucket_node * b = right->bucket, * nxt; b; b = nxt) {
 			nxt = b->next;
-			if (triangle::signed_area(*left->b, *left->c, *b->p) > 0) {
+			if (A * b->p->y > B * b->p->x + C) {
 				b->next = b1;
 				b1 = b;
 				locations[b->p - points.data()] = left;

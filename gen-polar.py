@@ -1,6 +1,6 @@
 import random
 import math
-n = 20
+n = 200
 print(n)
 for i in xrange(n):
 	R, phi = math.sqrt(random.random()), 2*math.pi*random.random()
